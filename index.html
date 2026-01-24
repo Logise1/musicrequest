@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Request</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/moment-duration-format/2.3.2/moment-duration-format.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+</head>
+
+<body>
+
+    <div id="userGreeting" class="user-greeting"></div>
+
+    <div class="container">
+        <h1>Music Request</h1>
+        <p class="subtitle">Enter a YouTube URL to add to the global queue.</p>
+
+        <div class="input-group">
+            <input type="text" id="songInput" placeholder="YOUTUBE URL" autocomplete="off">
+            <button onclick="addSong()">ENQUEUE TRACK</button>
+        </div>
+
+        <div style="font-size:0.8rem; color:#444; margin-top: -30px; margin-bottom: 20px;">
+            Connected to Global DB (Realtime)
+        </div>
+
+        <div class="queue-container">
+            <h2 style="font-size: 1.5rem; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 20px;">
+                CURRENT QUEUE</h2>
+            <div id="queueList" class="queue-list">
+                <div style="opacity:0.5; padding:20px;">LOADING QUEUE...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Login Overlay -->
+    <div id="loginOverlay"
+        style="position:fixed; inset:0; background:#000; z-index:9999; display:flex; justify-content:center; align-items:center; flex-direction:column; padding:20px;">
+        <h1 style="font-size:2rem; margin-bottom:2rem;">ACCESS CODE</h1>
+        <div style="display:flex; flex-direction:column; gap:10px; width:100%; max-width:300px;">
+            <input type="text" id="codeInput" placeholder="4-DIGIT CODE" maxlength="4"
+                style="text-align:center; font-size:1.5rem; letter-spacing:5px;">
+            <button onclick="verifyCode()">ENTER</button>
+        </div>
+        <p id="loginError" style="color:red; margin-top:10px; display:none;">INVALID CODE</p>
+    </div>
+
+    <!-- Now Playing Footer -->
+    <div id="nowPlayingBar" class="now-playing-bar">
+        <div class="np-info">
+            <img id="npThumb" src="" class="np-thumb" alt="thumb">
+            <div class="np-text">
+                <span id="npTitle" class="np-title">LOADING...</span>
+                <span id="npChannel" class="np-artist">Wait...</span>
+            </div>
+        </div>
+        <div class="np-progress-container">
+            <div class="np-time">
+                <span id="npCurrentTime">0:00</span>
+                <span id="npDuration">2:00</span>
+            </div>
+            <div class="progress-bg">
+                <div id="npFill" class="progress-fill"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast">Request added</div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyBi5fQUumRe3zDb82mOcbl_m3JxP_9vVO4",
+            authDomain: "toon-acb19.firebaseapp.com",
+            databaseURL: "https://toon-acb19-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "toon-acb19",
+            storageBucket: "toon-acb19.firebasestorage.app",
+            messagingSenderId: "627627273918",
+            appId: "1:627627273918:web:55132292fc07d4a06e38ef",
+            measurementId: "G-6MMXY2SG4D"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        const API_KEY = "AIzaSyDolnN5Or3RxPSEObNNfK0gZgQD0z4IITQ";
+
+        // Global State
+        let currentNowPlaying = null;
+        let currentUser = null;
+        let localQueue = [];
+
+        document.addEventListener('DOMContentLoaded', () => {
+            checkLogin();
+            initListeners();
+            // Local UI Loop for Progress Bar only
+            setInterval(updateNowPlayingUI, 200);
+        });
+
+        function initListeners() {
+            // Queue Listener
+            db.ref('requests').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (!data) {
+                    localQueue = [];
+                } else {
+                    localQueue = Object.entries(data).map(([key, val]) => ({ key, ...val }));
+                }
+                renderQueue(localQueue);
+            });
+
+            // Now Playing Listener
+            db.ref('now_playing').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    currentNowPlaying = data;
+                    updateNowPlayingData(data);
+                } else {
+                    currentNowPlaying = null;
+                    document.getElementById('nowPlayingBar').classList.remove('active');
+                }
+            });
+        }
+
+        // --- AUTH ---
+        function checkLogin() {
+            const stored = localStorage.getItem('musicUser');
+            if (stored) {
+                currentUser = JSON.parse(stored);
+                document.getElementById('loginOverlay').style.display = 'none';
+                updateGreeting();
+            }
+        }
+
+        function verifyCode() {
+            const input = document.getElementById('codeInput');
+            const code = input.value.trim();
+            const errorMsg = document.getElementById('loginError');
+
+            if (code.length !== 4) return;
+
+            errorMsg.style.display = 'none';
+
+            db.ref('codes/' + code).once('value')
+                .then(snapshot => {
+                    const data = snapshot.val();
+                    if (!data) {
+                        errorMsg.innerText = "CODE NOT FOUND";
+                        errorMsg.style.display = 'block';
+                        return;
+                    }
+                    if (data.claimed) {
+                        errorMsg.innerText = "CODE ALREADY USED";
+                        errorMsg.style.display = 'block';
+                        return;
+                    }
+
+                    // Claim
+                    return db.ref('codes/' + code).update({ claimed: true }).then(() => {
+                        currentUser = { code: code, name: data.name };
+                        localStorage.setItem('musicUser', JSON.stringify(currentUser));
+                        document.getElementById('loginOverlay').style.display = 'none';
+                        updateGreeting();
+                    });
+                })
+                .catch(e => {
+                    console.error(e);
+                    errorMsg.innerText = "ERROR CONNECTING";
+                    errorMsg.style.display = 'block';
+                });
+        }
+
+        function updateGreeting() {
+            if (currentUser) {
+                document.getElementById('userGreeting').innerText = `HOLA, ${currentUser.name}`;
+            }
+        }
+
+        // --- MAIN ---
+        async function addSong() {
+            if (!currentUser) return;
+
+            const input = document.getElementById('songInput');
+            const url = input.value.trim();
+            const button = document.querySelector('button');
+            const originalText = button.innerText;
+
+            if (!url) return;
+
+            // CHECK LIMIT (Max 2 songs in queue) using local synced queue
+            // No need to fetch, we have localQueue from listener!
+            let myCount = localQueue.filter(s => s.userCode === currentUser.code).length;
+
+            if (myCount >= 2) {
+                alert(`QUEUE LIMIT REACHED (${myCount}/2). WAIT FOR YOUR SONGS TO PLAY.`);
+                return;
+            }
+
+            button.innerText = "FETCHING...";
+            button.disabled = true;
+
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+
+            if (match && match[2].length === 11) {
+                const videoId = match[2];
+
+                try {
+                    const ytUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${API_KEY}`;
+                    const res = await fetch(ytUrl);
+                    const data = await res.json();
+
+                    if (!data.items || data.items.length === 0) throw new Error("Video not found");
+
+                    const item = data.items[0];
+                    const snippet = item.snippet;
+                    const details = item.contentDetails;
+
+                    const durationObj = moment.duration(details.duration);
+                    const durationFormatted = durationObj.format("mm:ss", { trim: false });
+                    const durationSeconds = durationObj.asSeconds();
+
+                    const song = {
+                        id: videoId,
+                        title: snippet.title,
+                        channel: snippet.channelTitle,
+                        thumb: snippet.thumbnails.high ? snippet.thumbnails.high.url : snippet.thumbnails.default.url,
+                        duration: durationFormatted,
+                        durationSeconds: durationSeconds,
+                        publishedAt: snippet.publishedAt,
+                        addedAt: firebase.database.ServerValue.TIMESTAMP,
+                        userCode: currentUser.code,
+                        userName: currentUser.name
+                    };
+
+                    button.innerText = "SENDING...";
+                    await db.ref('requests').push(song);
+
+                    showToast();
+                    input.value = '';
+
+                } catch (error) {
+                    console.error("Error:", error);
+                    alert("Error: " + error.message);
+                }
+            } else {
+                alert('INVALID URL');
+            }
+
+            button.innerText = originalText;
+            button.disabled = false;
+        }
+
+        function deleteSong(key) {
+            if (!confirm("DELETE REQUEST?")) return;
+            db.ref('requests/' + key).remove()
+                .catch(e => alert("ERROR DELETING"));
+        }
+
+        function renderQueue(queue) {
+            const list = document.getElementById('queueList');
+            if (queue.length === 0) {
+                list.innerHTML = '<div style="opacity:0.5; padding:20px;">QUEUE EMPTY</div>';
+                return;
+            }
+
+            list.innerHTML = queue.map(song => {
+                const isMine = currentUser && song.userCode === currentUser.code;
+                const deleteBtn = isMine ?
+                    `<button onclick="deleteSong('${song.key}')" style="padding:5px 10px; font-size:0.7rem; background:red; border:none; color:white; margin-left:10px; cursor:pointer;">DEL</button>`
+                    : '';
+
+                return `
+                <div class="queue-item">
+                    <img src="${song.thumb}" alt="thumb">
+                    <div class="info">
+                        <span class="title">${song.title}</span>
+                        <div style="display:flex; justify-content:space-between; width:100%; margin-top:5px;">
+                            <span class="status">${song.userName || 'UNKNOWN'}</span>
+                            <div style="display:flex; align-items:center;">
+                                <span class="status" style="border:1px solid #333; padding:2px 6px;">${song.duration || '2:00'}</span>
+                                ${deleteBtn}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `}).join('');
+        }
+
+        // --- Now Playing UI ---
+        function updateNowPlayingData(data) {
+            const bar = document.getElementById('nowPlayingBar');
+            bar.classList.add('active');
+            if (document.getElementById('npTitle').innerText !== data.title) {
+                document.getElementById('npTitle').innerText = data.title;
+                document.getElementById('npChannel').innerText = data.channel || 'Unknown Artist';
+                document.getElementById('npThumb').src = data.thumb;
+                const maxDuration = Math.min(120, data.durationSeconds || 120);
+                const mTotal = Math.floor(maxDuration / 60);
+                const sTotal = Math.floor(maxDuration % 60).toString().padStart(2, '0');
+                document.getElementById('npDuration').innerText = `${mTotal}:${sTotal}`;
+            }
+        }
+
+        function updateNowPlayingUI() {
+            if (!currentNowPlaying) return;
+            const maxDuration = Math.min(120, currentNowPlaying.durationSeconds || 120);
+            const elapsed = (Date.now() - currentNowPlaying.startTime) / 1000;
+            if (elapsed > maxDuration) {
+                document.getElementById('npFill').style.width = '100%';
+                return;
+            }
+            const pct = (elapsed / maxDuration) * 100;
+            document.getElementById('npFill').style.width = `${pct}%`;
+            const m = Math.floor(elapsed / 60);
+            const s = Math.floor(elapsed % 60).toString().padStart(2, '0');
+            document.getElementById('npCurrentTime').innerText = `${m}:${s}`;
+        }
+
+        function showToast() {
+            const toast = document.getElementById('toast');
+            toast.classList.add('show');
+            setTimeout(() => { toast.classList.remove('show'); }, 2000);
+        }
+    </script>
+</body>
+
+</html>

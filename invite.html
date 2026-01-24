@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invite Gen</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <style>
+        .code-display {
+            font-size: 4rem;
+            font-weight: 700;
+            letter-spacing: 10px;
+            margin: 2rem 0;
+            color: #fff;
+            border: 2px dashed #333;
+            padding: 1rem;
+            display: none;
+        }
+
+        .code-display.show {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>INVITE GENERATOR</h1>
+        <p class="subtitle">Generate a one-time code for a guest.</p>
+
+        <div class="input-group">
+            <input type="text" id="guestName" placeholder="GUEST NAME" autocomplete="off">
+            <button onclick="generateCode()">CREATE CODE</button>
+        </div>
+
+        <div id="codeResult" class="code-display"></div>
+    </div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyBi5fQUumRe3zDb82mOcbl_m3JxP_9vVO4",
+            authDomain: "toon-acb19.firebaseapp.com",
+            databaseURL: "https://toon-acb19-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "toon-acb19",
+            storageBucket: "toon-acb19.firebasestorage.app",
+            messagingSenderId: "627627273918",
+            appId: "1:627627273918:web:55132292fc07d4a06e38ef",
+            measurementId: "G-6MMXY2SG4D"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        function generateCode() {
+            const nameInput = document.getElementById('guestName');
+            const name = nameInput.value.trim();
+
+            if (!name) return alert("ENTER NAME");
+
+            const btn = document.querySelector('button');
+            const originalText = btn.innerText;
+            btn.innerText = "GENERATING...";
+            btn.disabled = true;
+
+            // Generate random 4 digits
+            const code = Math.floor(1000 + Math.random() * 9000).toString();
+
+            const payload = {
+                name: name,
+                claimed: false,
+                createdAt: firebase.database.ServerValue.TIMESTAMP
+            };
+
+            db.ref('codes/' + code).set(payload)
+                .then(() => {
+                    const display = document.getElementById('codeResult');
+                    display.innerText = code;
+                    display.classList.add('show');
+                    nameInput.value = '';
+                })
+                .catch((error) => {
+                    console.error(error);
+                    alert("ERROR GENERATING CODE");
+                })
+                .finally(() => {
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                });
+        }
+    </script>
+</body>
+
+</html>

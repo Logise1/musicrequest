@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Queue Player</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+</head>
+
+<body>
+    <div id="startOverlay"
+        style="position:fixed; inset:0; background:#000; z-index:9999; display:flex; justify-content:center; align-items:center; flex-direction:column; cursor:pointer;"
+        onclick="startDJ()">
+        <h1>CLICK TO START PLAYER</h1>
+        <p style="color:#666">REQUIRED FOR AUDIO</p>
+    </div>
+
+    <div class="player-wrapper" style="border:none; margin-bottom: 1rem;">
+        <div class="video-container" style="border: 2px solid #333;">
+            <div id="player"></div>
+        </div>
+
+        <div class="now-playing-info">
+            <div>
+                <p style="font-size:0.8rem; color:#666; margin-bottom:5px;">NOW PLAYING</p>
+                <div id="currentTitle">WAITING FOR REQUESTS...</div>
+            </div>
+            <div id="countdown">00:00</div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div style="border-bottom: 1px solid #333; padding-bottom:10px; margin-bottom:20px; text-align:left;">
+            <span style="font-weight:bold; font-size:1.2rem;">UP NEXT</span>
+        </div>
+        <div id="queueList" class="queue-list">
+            <!-- Items -->
+        </div>
+    </div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyBi5fQUumRe3zDb82mOcbl_m3JxP_9vVO4",
+            authDomain: "toon-acb19.firebaseapp.com",
+            databaseURL: "https://toon-acb19-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "toon-acb19",
+            storageBucket: "toon-acb19.firebasestorage.app",
+            messagingSenderId: "627627273918",
+            appId: "1:627627273918:web:55132292fc07d4a06e38ef",
+            measurementId: "G-6MMXY2SG4D"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        const PLAY_DURATION = 120; // 2 minutes
+
+        // State
+        let player;
+        let isPlaying = false;
+        let isChanging = false;
+        let countdownInterval = null;
+        let localQueue = []; // Local mirror of DB Queue
+
+        function initListeners() {
+            // Queue Listener
+            db.ref('requests').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (!data) localQueue = [];
+                else localQueue = Object.entries(data).map(([key, val]) => ({ key, ...val }));
+
+                renderQueue(localQueue);
+
+                // Auto Trigger if idle and safe
+                if (!isPlaying && !isChanging && localQueue.length > 0) {
+                    if (player && typeof player.loadVideoById === 'function') playNext();
+                }
+            });
+        }
+
+        // --- YouTube API ---
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '100%',
+                width: '100%',
+                playerVars: {
+                    'autoplay': 1,
+                    'controls': 0,
+                    'disablekb': 1,
+                    'iv_load_policy': 3,
+                    'playsinline': 1
+                },
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange,
+                    'onError': onPlayerError
+                }
+            });
+        }
+
+        function onPlayerReady(event) {
+            console.log("Player Ready");
+        }
+
+        function onPlayerStateChange(event) {
+            if (event.data === YT.PlayerState.ENDED && !isChanging) {
+                console.log("Video ended natural, playing next...");
+                playNext();
+            }
+        }
+
+        function onPlayerError(event) {
+            console.error("Player Error:", event.data);
+            // Force skip even if "changing" (lock stuck check)
+            setTimeout(playNext, 2000);
+        }
+
+        function startDJ() {
+            document.getElementById('startOverlay').style.display = 'none';
+
+            // 1. Lock system
+            isChanging = true;
+
+            // 2. Start Listeners (Data Sync)
+            initListeners();
+
+            // 3. Check for Resume Session
+            db.ref('now_playing').once('value').then(snap => {
+                const playing = snap.val();
+                let resumed = false;
+
+                if (playing) {
+                    const elapsed = (Date.now() - playing.startTime) / 1000;
+                    const LIMIT = 120;
+                    const realDuration = playing.durationSeconds || LIMIT;
+
+                    if (elapsed < realDuration) {
+                        console.log("Resuming session:", playing.title);
+                        resumePlaying(playing, elapsed);
+                        resumed = true;
+                    }
+                }
+
+                if (!resumed) {
+                    // Release lock, Listener will pick up queue if exists
+                    isChanging = false;
+                    // Force check just in case listener already fired while locked
+                    if (localQueue.length > 0) playNext();
+                }
+            });
+        }
+
+        function resumePlaying(item, elapsedSeconds) {
+            // isChanging is ALREADY TRUE from startDJ
+            isPlaying = true;
+            document.getElementById('currentTitle').innerText = item.title.toUpperCase();
+
+            if (player && typeof player.loadVideoById === 'function') {
+                player.loadVideoById(item.id, parseInt(elapsedSeconds));
+                player.playVideo();
+            }
+
+            // Restore Timer
+            const LIMIT = 120;
+            let realDuration = item.durationSeconds || LIMIT;
+            let strictLimit = realDuration >= LIMIT;
+            // Recalculate remaining
+            let timerDuration = (strictLimit ? LIMIT : (realDuration + 10)) - elapsedSeconds;
+            let timeLeft = (strictLimit ? LIMIT : realDuration) - elapsedSeconds;
+
+            updateTimer(timeLeft);
+
+            // Release lock safely
+            setTimeout(() => { isChanging = false; }, 1000);
+
+            if (countdownInterval) clearInterval(countdownInterval);
+            countdownInterval = setInterval(() => {
+                timeLeft--;
+                if (timeLeft >= 0) updateTimer(timeLeft);
+
+                timerDuration--;
+                if (timerDuration <= 0) {
+                    clearInterval(countdownInterval);
+                    playNext();
+                }
+            }, 1000);
+        }
+
+        // --- Audio & TTS ---
+        const announcementSFX = new Audio('nextsong.ogg');
+
+        function playAnnouncement(title, user) {
+            console.log("DEBUG: Starting Announcement for:", title);
+            return new Promise((resolve) => {
+                const safety = setTimeout(() => {
+                    console.log("DEBUG: Announcement Timed Out (Safety)");
+                    resolve();
+                }, 6000);
+
+                announcementSFX.volume = 0.5;
+                announcementSFX.currentTime = 0;
+                announcementSFX.play().catch(e => console.log("DEBUG: SFX Failed", e));
+
+                if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+
+                    const safeTitle = title.substring(0, 50);
+                    const userText = user ? ` pedido por ${user}` : '';
+                    const text = `Ahora suena: ${safeTitle}${userText}`;
+                    console.log("DEBUG: Speaking TTS:", text);
+
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.lang = 'es-ES';
+                    utterance.rate = 1.1;
+                    utterance.volume = 1.0;
+
+                    utterance.onend = () => {
+                        console.log("DEBUG: TTS Ended");
+                        clearTimeout(safety);
+                        resolve();
+                    };
+
+                    utterance.onerror = (e) => {
+                        console.log("DEBUG: TTS Error", e);
+                        clearTimeout(safety);
+                        resolve();
+                    };
+
+                    window.speechSynthesis.speak(utterance);
+                } else {
+                    console.log("DEBUG: No TTS support");
+                    clearTimeout(safety);
+                    resolve();
+                }
+            });
+        }
+
+        // --- Logic ---
+        async function playNext() {
+            if (isChanging) {
+                console.log("DEBUG: Ignored playNext because isChanging is true");
+                return;
+            }
+            if (localQueue.length === 0) {
+                console.log("DEBUG: Queue empty, going idle");
+                goIdle();
+                return;
+            }
+
+            isChanging = true;
+            clearInterval(countdownInterval);
+
+            const next = localQueue[0];
+            console.log("DEBUG: playNext TRIGGERED. Next song:", next.title, "ID:", next.id);
+
+            renderQueue(localQueue.slice(1));
+
+            document.getElementById('currentTitle').innerText = "ANNOUNCING: " + next.title.toUpperCase();
+
+            // Wait for TTS
+            await playAnnouncement(next.title, next.userName);
+
+            console.log("DEBUG: Announcement done. Starting Video Playback...");
+
+            // DB
+            db.ref('requests/' + next.key).remove().catch(e => console.error("DEBUG: Remove failed", e));
+
+            const nowPlayingData = { ...next, startTime: Date.now() };
+            delete nowPlayingData.key;
+            db.ref('now_playing').set(nowPlayingData).catch(e => console.error("DEBUG: Set NP failed", e));
+
+            // UI
+            isPlaying = true;
+            document.getElementById('currentTitle').innerText = next.title.toUpperCase();
+
+            // Player Interaction - Wait for Player Readiness
+            let attempts = 0;
+            while ((!player || typeof player.loadVideoById !== 'function') && attempts < 20) {
+                console.log("DEBUG: Player not ready, waiting... attempt", attempts);
+                await new Promise(r => setTimeout(r, 250)); // Wait 250ms
+                attempts++;
+            }
+
+            if (player && typeof player.loadVideoById === 'function') {
+                try {
+                    console.log("DEBUG: Calling player.loadVideoById with ID:", next.id);
+                    player.loadVideoById(next.id);
+                    player.setVolume(100);
+                    console.log("DEBUG: loadVideoById called success");
+                } catch (e) { console.error("DEBUG: Player Exception", e); }
+            } else {
+                console.error("DEBUG: Player Object TIMEOUT - Failed to load video");
+                // We rely on the timer to move eventually, or user refresh
+            }
+
+            // Timer
+            const LIMIT = 120;
+            let realDuration = next.durationSeconds || LIMIT;
+            let strictLimit = realDuration >= LIMIT;
+            let timerDuration = strictLimit ? LIMIT : (realDuration + 10);
+            let timeLeft = strictLimit ? LIMIT : realDuration;
+
+            console.log("DEBUG: Timer set for:", timerDuration, "s");
+            updateTimer(timeLeft);
+
+            setTimeout(() => {
+                console.log("DEBUG: Unlocking isChanging");
+                isChanging = false;
+            }, 1000);
+
+            countdownInterval = setInterval(() => {
+                timeLeft--;
+                if (timeLeft >= 0) updateTimer(timeLeft);
+
+                timerDuration--;
+                if (timerDuration <= 0) {
+                    clearInterval(countdownInterval);
+                    console.log("DEBUG: Timer finished, calling playNext");
+                    playNext();
+                }
+            }, 1000);
+        }
+
+        function goIdle() {
+            isPlaying = false;
+            document.getElementById('currentTitle').innerText = "WAITING FOR REQUESTS...";
+            document.getElementById('countdown').innerText = "00:00";
+            db.ref('now_playing').remove();
+            if (player && player.stopVideo) player.stopVideo();
+            isChanging = false;
+        }
+
+        function updateTimer(s) {
+            const min = Math.floor(s / 60).toString().padStart(2, '0');
+            const sec = (Math.floor(s) % 60).toString().padStart(2, '0'); // floor s just in case
+            document.getElementById('countdown').innerText = `${min}:${sec}`;
+        }
+
+        function renderQueue(queue) {
+            const list = document.getElementById('queueList');
+            if (queue.length === 0) {
+                list.innerHTML = '<div style="opacity:0.5; padding:20px;">QUEUE EMPTY</div>';
+                return;
+            }
+
+            const html = queue.map(item => `
+                <div class="queue-item">
+                    <img src="${item.thumb}" alt="cover">
+                    <div class="info">
+                        <span class="title">${item.title}</span>
+                        <div style="display:flex; justify-content:space-between; width:100%; margin-top:5px;">
+                            <span class="status">${item.userName ? item.userName.toUpperCase() : (item.channel ? item.channel.toUpperCase() : 'UNKNOWN')}</span>
+                            <span class="status" style="border:1px solid #333; padding:2px 6px;">${item.duration || '2:00'}</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+            list.innerHTML = html;
+        }
+
+        // Load YouTube API Dynamically to prevent race conditions
+        var tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        var firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+    </script>
+</body>
+
+</html>
