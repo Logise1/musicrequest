@@ -82,10 +82,14 @@
 
         // State
         let player;
-        let isPlaying = false;
         let isChanging = false;
         let countdownInterval = null;
         let localQueue = []; // Local mirror of DB Queue
+
+        // New State for Queue Management
+        let currentSong = null;
+        let isSessionActive = false;
+        let loadingTimeout = null;
 
         function initListeners() {
             // Queue Listener
@@ -97,7 +101,7 @@
                 renderQueue(localQueue);
 
                 // Auto Trigger if idle and safe
-                if (!isPlaying && !isChanging && localQueue.length > 0) {
+                if (!isSessionActive && !isChanging && localQueue.length > 0) {
                     if (player && typeof player.loadVideoById === 'function') playNext();
                 }
             });
@@ -147,9 +151,32 @@
         }
 
         function onPlayerStateChange(event) {
-            if (event.data === YT.PlayerState.ENDED && !isChanging) {
-                console.log("Video ended natural, playing next...");
-                playNext();
+            // 1. PLAYING (Start Session if new, or Handle Ads)
+            if (event.data === YT.PlayerState.PLAYING) {
+                const data = player.getVideoData();
+                const playingId = data ? data.video_id : null;
+
+                // Check if it's the requested song
+                if (currentSong && playingId === currentSong.id) {
+                    // Real Content
+                    if (!isSessionActive) {
+                        console.log("DEBUG: Real content started. Starting Session...");
+                        startSession();
+                    }
+                } else {
+                    // Ad or Mismatch
+                    console.log("DEBUG: ID Mismatch or Ad detected. Waiting...");
+                    // Optional: Mute ads? 
+                    // if(!player.isMuted()) player.mute(); 
+                }
+            }
+
+            // 2. ENDED (Next)
+            if (event.data === YT.PlayerState.ENDED) {
+                if (isSessionActive) {
+                    console.log("Video ended natural, playing next...");
+                    playNext();
+                }
             }
         }
 
@@ -196,7 +223,9 @@
 
         function resumePlaying(item, elapsedSeconds) {
             // isChanging is ALREADY TRUE from startDJ
-            isPlaying = true;
+            currentSong = item;
+            isSessionActive = true; // Already active
+
             document.getElementById('currentTitle').innerText = item.title.toUpperCase();
 
             if (player && typeof player.loadVideoById === 'function') {
@@ -281,92 +310,111 @@
 
         // --- Logic ---
         async function playNext() {
-            if (isChanging) {
-                console.log("DEBUG: Ignored playNext because isChanging is true");
-                return;
-            }
+            if (isChanging) return;
+
             if (localQueue.length === 0) {
-                console.log("DEBUG: Queue empty, going idle");
                 goIdle();
                 return;
             }
 
             isChanging = true;
-            clearInterval(countdownInterval);
+            isSessionActive = false; // Reset session
+            if (countdownInterval) clearInterval(countdownInterval);
+            if (loadingTimeout) clearTimeout(loadingTimeout);
+
+            // 1. Clear "Now Playing" immediately so clients know song ended
+            db.ref('now_playing').remove();
+
+            // 2. Play Silence Video (Stop previous music instantly)
+            if (player && typeof player.loadVideoById === 'function') {
+                player.loadVideoById("1JPwiLeo4WY");
+            }
 
             const next = localQueue[0];
-            console.log("DEBUG: playNext TRIGGERED. Next song:", next.title, "ID:", next.id);
+            currentSong = next; // Store pending
 
+            console.log("DEBUG: playNext PREPARE. Next song:", next.title);
+
+            // Optimistic UI
             renderQueue(localQueue.slice(1));
+            document.getElementById('currentTitle').innerText = "ANNOUNCING...";
 
-            document.getElementById('currentTitle').innerText = "ANNOUNCING: " + next.title.toUpperCase();
-
-            // Wait for TTS
+            // 3. Wait for TTS (Music is now silent)
             await playAnnouncement(next.title, next.userName);
 
-            console.log("DEBUG: Announcement done. Starting Video Playback...");
+            document.getElementById('currentTitle').innerText = "LOADING VIDEO...";
 
-            // DB
-            db.ref('requests/' + next.key).remove().catch(e => console.error("DEBUG: Remove failed", e));
+            // Remove from Queue (It's now 'pending' in player)
+            db.ref('requests/' + next.key).remove().catch(e => console.error(e));
 
-            const nowPlayingData = { ...next, startTime: Date.now() };
-            delete nowPlayingData.key;
-            db.ref('now_playing').set(nowPlayingData).catch(e => console.error("DEBUG: Set NP failed", e));
-
-            // UI
-            isPlaying = true;
-            document.getElementById('currentTitle').innerText = next.title.toUpperCase();
-
-            // Player Interaction - Wait for Player Readiness
+            // Load Real Video
             let attempts = 0;
             while ((!player || typeof player.loadVideoById !== 'function') && attempts < 20) {
-                console.log("DEBUG: Player not ready, waiting... attempt", attempts);
-                await new Promise(r => setTimeout(r, 250)); // Wait 250ms
+                await new Promise(r => setTimeout(r, 250));
                 attempts++;
             }
 
             if (player && typeof player.loadVideoById === 'function') {
-                try {
-                    console.log("DEBUG: Calling player.loadVideoById with ID:", next.id);
-                    player.loadVideoById(next.id);
-                    player.setVolume(100);
-                    console.log("DEBUG: loadVideoById called success");
-                } catch (e) { console.error("DEBUG: Player Exception", e); }
-            } else {
-                console.error("DEBUG: Player Object TIMEOUT - Failed to load video");
-                // We rely on the timer to move eventually, or user refresh
-            }
+                player.loadVideoById(next.id);
+                player.setVolume(100);
+                if (player.isMuted()) player.unMute();
 
-            // Timer
+                // Safety Timeout: If video doesn't start in 15s, skip
+                loadingTimeout = setTimeout(() => {
+                    if (!isSessionActive) {
+                        console.error("DEBUG: Loading Timeout. Skipping...");
+                        playNext();
+                    }
+                }, 15000);
+
+            } else {
+                console.error("Player invalid");
+                isChanging = false;
+            }
+        }
+
+        function startSession() {
+            if (loadingTimeout) clearTimeout(loadingTimeout);
+            isSessionActive = true;
+
+            // Register in DB
+            const nowPlayingData = { ...currentSong, startTime: Date.now() };
+            if (nowPlayingData.key) delete nowPlayingData.key;
+
+            db.ref('now_playing').set(nowPlayingData);
+
+            // UI
+            document.getElementById('currentTitle').innerText = currentSong.title.toUpperCase();
+
+            // Timer Logic
             const LIMIT = MAX_DURATION;
-            let realDuration = next.durationSeconds || LIMIT;
+            let realDuration = currentSong.durationSeconds || LIMIT;
             let strictLimit = realDuration >= LIMIT;
             let timerDuration = strictLimit ? LIMIT : (realDuration + 10);
             let timeLeft = strictLimit ? LIMIT : realDuration;
 
-            console.log("DEBUG: Timer set for:", timerDuration, "s");
+            // Release Lock
+            isChanging = false;
+
             updateTimer(timeLeft);
 
-            setTimeout(() => {
-                console.log("DEBUG: Unlocking isChanging");
-                isChanging = false;
-            }, 1000);
-
+            if (countdownInterval) clearInterval(countdownInterval);
             countdownInterval = setInterval(() => {
+                // Only tick if playing? For now simple absolute timer
                 timeLeft--;
                 if (timeLeft >= 0) updateTimer(timeLeft);
 
                 timerDuration--;
                 if (timerDuration <= 0) {
                     clearInterval(countdownInterval);
-                    console.log("DEBUG: Timer finished, calling playNext");
                     playNext();
                 }
             }, 1000);
         }
 
         function goIdle() {
-            isPlaying = false;
+            isSessionActive = false;
+            currentSong = null;
             document.getElementById('currentTitle').innerText = "WAITING FOR REQUESTS...";
             document.getElementById('countdown').innerText = "00:00";
             db.ref('now_playing').remove();
