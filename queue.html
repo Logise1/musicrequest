@@ -33,6 +33,28 @@
     </div>
 
     <div class="container">
+        <div style="border: 1px solid #444; padding: 15px; margin-bottom: 25px; background: #111; border-radius: 8px;">
+            <h3 style="margin-top:0; color: #fff; border-bottom: 1px solid #333; padding-bottom: 10px;">ADMIN CONTROLS
+            </h3>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:15px;">
+                <label style="color:#aaa;">Max Time (sec):</label>
+                <input type="number" id="maxDurInput" value="120"
+                    style="padding:5px; width:60px; background:#222; border:1px solid #444; color:white;">
+                <button onclick="updateSettings()"
+                    style="padding:5px 15px; cursor:pointer; background:#333; border:none; color:white;">APPLY</button>
+            </div>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button onclick="playNext()"
+                    style="padding:8px 15px; cursor:pointer; background:#d4b106; border:none; color:black; font-weight:bold; border-radius:4px;">SKIP
+                    SONG</button>
+                <button onclick="clearQueue()"
+                    style="padding:8px 15px; cursor:pointer; background:#aa0000; border:none; color:white; font-weight:bold; border-radius:4px;">CLEAR
+                    QUEUE</button>
+            </div>
+        </div>
+
         <div style="border-bottom: 1px solid #333; padding-bottom:10px; margin-bottom:20px; text-align:left;">
             <span style="font-weight:bold; font-size:1.2rem;">UP NEXT</span>
         </div>
@@ -56,7 +78,7 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
-        const PLAY_DURATION = 120; // 2 minutes
+        let MAX_DURATION = 120;
 
         // State
         let player;
@@ -79,6 +101,25 @@
                     if (player && typeof player.loadVideoById === 'function') playNext();
                 }
             });
+        }
+
+        // --- Admin Functions ---
+        function updateSettings() {
+            const val = parseInt(document.getElementById('maxDurInput').value);
+            if (val > 0) {
+                MAX_DURATION = val;
+                alert('MAX DURATION UPDATED TO: ' + MAX_DURATION + 's');
+            }
+        }
+
+        function removeRequest(key) {
+            if (!confirm('Delete this request?')) return;
+            db.ref('requests/' + key).remove();
+        }
+
+        function clearQueue() {
+            if (!confirm('DELETE ALL SONGS IN QUEUE?')) return;
+            db.ref('requests').remove();
         }
 
         // --- YouTube API ---
@@ -134,7 +175,7 @@
 
                 if (playing) {
                     const elapsed = (Date.now() - playing.startTime) / 1000;
-                    const LIMIT = 120;
+                    const LIMIT = MAX_DURATION;
                     const realDuration = playing.durationSeconds || LIMIT;
 
                     if (elapsed < realDuration) {
@@ -164,7 +205,7 @@
             }
 
             // Restore Timer
-            const LIMIT = 120;
+            const LIMIT = MAX_DURATION;
             let realDuration = item.durationSeconds || LIMIT;
             let strictLimit = realDuration >= LIMIT;
             // Recalculate remaining
@@ -297,7 +338,7 @@
             }
 
             // Timer
-            const LIMIT = 120;
+            const LIMIT = MAX_DURATION;
             let realDuration = next.durationSeconds || LIMIT;
             let strictLimit = realDuration >= LIMIT;
             let timerDuration = strictLimit ? LIMIT : (realDuration + 10);
@@ -353,7 +394,10 @@
                         <span class="title">${item.title}</span>
                         <div style="display:flex; justify-content:space-between; width:100%; margin-top:5px;">
                             <span class="status">${item.userName ? item.userName.toUpperCase() : (item.channel ? item.channel.toUpperCase() : 'UNKNOWN')}</span>
-                            <span class="status" style="border:1px solid #333; padding:2px 6px;">${item.duration || '2:00'}</span>
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span class="status" style="border:1px solid #333; padding:2px 6px;">${item.duration || '2:00'}</span>
+                                <button onclick="removeRequest('${item.key}')" style="background:#cc0000; color:white; border:none; cursor:pointer; padding:2px 8px; font-size:0.7rem; border-radius:3px;">X</button>
+                            </div>
                         </div>
                     </div>
                 </div>
