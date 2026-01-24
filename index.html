@@ -19,11 +19,26 @@
 
     <div class="container">
         <h1>Music Request</h1>
-        <p class="subtitle">Enter a YouTube URL to add to the global queue.</p>
+        <p class="subtitle">Search for a song or paste a link.</p>
 
+        <!-- Search Section -->
         <div class="input-group">
-            <input type="text" id="songInput" placeholder="YOUTUBE URL" autocomplete="off">
-            <button onclick="addSong()">ENQUEUE TRACK</button>
+            <input type="text" id="searchInput" placeholder="SEARCH SONG" autocomplete="off"
+                onkeydown="if(event.key === 'Enter') searchVideos()">
+            <button onclick="searchVideos()" id="searchBtn">SEARCH</button>
+        </div>
+
+        <div id="searchResults" class="search-results"></div>
+
+        <!-- Hidden URL Input -->
+        <div style="margin-bottom: 30px;">
+            <p onclick="toggleUrlInput()"
+                style="cursor:pointer; text-decoration:underline; font-size:0.8rem; color:#666; margin-bottom:10px;">
+                Have a direct link?</p>
+            <div id="urlInputContainer" style="display:none;" class="input-group">
+                <input type="text" id="songInput" placeholder="YOUTUBE URL" autocomplete="off">
+                <button onclick="addSongFromUrl()">ENQUEUE URL</button>
+            </div>
         </div>
 
         <div style="font-size:0.8rem; color:#444; margin-top: -30px; margin-bottom: 20px;">
@@ -181,78 +196,140 @@
         }
 
         // --- MAIN ---
-        async function addSong() {
+        // --- MAIN ---
+        function toggleUrlInput() {
+            const el = document.getElementById('urlInputContainer');
+            el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+        }
+
+        async function searchVideos() {
             if (!currentUser) return;
 
-            const input = document.getElementById('songInput');
-            const url = input.value.trim();
-            const button = document.querySelector('button');
-            const originalText = button.innerText;
+            const input = document.getElementById('searchInput');
+            const query = input.value.trim();
+            const button = document.getElementById('searchBtn');
 
-            if (!url) return;
+            if (!query) return;
 
-            // CHECK LIMIT (Max 2 songs in queue) using local synced queue
-            // No need to fetch, we have localQueue from listener!
-            let myCount = localQueue.filter(s => s.userCode === currentUser.code).length;
+            button.innerText = "SEARCHING...";
+            button.disabled = true;
 
-            if (myCount >= 2) {
-                alert(`QUEUE LIMIT REACHED (${myCount}/2). WAIT FOR YOUR SONGS TO PLAY.`);
+            try {
+                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=5&key=${API_KEY}`;
+                const res = await fetch(searchUrl);
+                const data = await res.json();
+
+                if (!data.items) throw new Error("Search failed");
+
+                renderSearchResults(data.items);
+            } catch (error) {
+                console.error(error);
+                alert("Search Error: " + error.message);
+            }
+
+            button.innerText = "SEARCH";
+            button.disabled = false;
+        }
+
+        function renderSearchResults(items) {
+            const container = document.getElementById('searchResults');
+            container.innerHTML = '';
+
+            if (items.length === 0) {
+                container.innerHTML = '<div style="opacity:0.5; padding:10px;">NO RESULTS</div>';
                 return;
             }
 
-            button.innerText = "FETCHING...";
-            button.disabled = true;
+            items.forEach(item => {
+                const vidId = item.id.videoId;
+                const snippet = item.snippet;
+
+                const div = document.createElement('div');
+                div.className = 'search-item';
+                div.innerHTML = `
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <img src="${snippet.thumbnails.default.url}" style="width:120px; height:90px; object-fit:cover; border-radius:4px;">
+                        <div style="text-align:left;">
+                            <div style="font-weight:bold; font-size:0.9rem; margin-bottom:4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${snippet.title}</div>
+                            <div style="font-size:0.8rem; color:#888;">${snippet.channelTitle}</div>
+                        </div>
+                    </div>
+                `;
+                div.onclick = () => processVideoId(vidId);
+                container.appendChild(div);
+            });
+        }
+
+        async function addSongFromUrl() {
+            const input = document.getElementById('songInput');
+            const url = input.value.trim();
+
+            if (!url) return;
 
             const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
             const match = url.match(regExp);
 
             if (match && match[2].length === 11) {
-                const videoId = match[2];
-
-                try {
-                    const ytUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${API_KEY}`;
-                    const res = await fetch(ytUrl);
-                    const data = await res.json();
-
-                    if (!data.items || data.items.length === 0) throw new Error("Video not found");
-
-                    const item = data.items[0];
-                    const snippet = item.snippet;
-                    const details = item.contentDetails;
-
-                    const durationObj = moment.duration(details.duration);
-                    const durationFormatted = durationObj.format("mm:ss", { trim: false });
-                    const durationSeconds = durationObj.asSeconds();
-
-                    const song = {
-                        id: videoId,
-                        title: snippet.title,
-                        channel: snippet.channelTitle,
-                        thumb: snippet.thumbnails.high ? snippet.thumbnails.high.url : snippet.thumbnails.default.url,
-                        duration: durationFormatted,
-                        durationSeconds: durationSeconds,
-                        publishedAt: snippet.publishedAt,
-                        addedAt: firebase.database.ServerValue.TIMESTAMP,
-                        userCode: currentUser.code,
-                        userName: currentUser.name
-                    };
-
-                    button.innerText = "SENDING...";
-                    await db.ref('requests').push(song);
-
-                    showToast();
-                    input.value = '';
-
-                } catch (error) {
-                    console.error("Error:", error);
-                    alert("Error: " + error.message);
-                }
+                await processVideoId(match[2]);
+                input.value = '';
             } else {
                 alert('INVALID URL');
             }
+        }
 
-            button.innerText = originalText;
-            button.disabled = false;
+        async function processVideoId(videoId) {
+            if (!currentUser) return;
+
+            // CHECK LIMIT
+            let myCount = localQueue.filter(s => s.userCode === currentUser.code).length;
+            if (myCount >= 2) {
+                alert(`QUEUE LIMIT REACHED (${myCount}/2). WAIT FOR YOUR SONGS TO PLAY.`);
+                return;
+            }
+
+            // Simple UI feedback using the search button just to show activity if search was used
+            // Or use a global loader. For simplicity, let's just show toast early or use a temp loader.
+            // But better:
+
+            try {
+                const ytUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${API_KEY}`;
+                const res = await fetch(ytUrl);
+                const data = await res.json();
+
+                if (!data.items || data.items.length === 0) throw new Error("Video not found");
+
+                const item = data.items[0];
+                const snippet = item.snippet;
+                const details = item.contentDetails;
+
+                const durationObj = moment.duration(details.duration);
+                const durationFormatted = durationObj.format("mm:ss", { trim: false });
+                const durationSeconds = durationObj.asSeconds();
+
+                const song = {
+                    id: videoId,
+                    title: snippet.title,
+                    channel: snippet.channelTitle,
+                    thumb: snippet.thumbnails.high ? snippet.thumbnails.high.url : snippet.thumbnails.default.url,
+                    duration: durationFormatted,
+                    durationSeconds: durationSeconds,
+                    publishedAt: snippet.publishedAt,
+                    addedAt: firebase.database.ServerValue.TIMESTAMP,
+                    userCode: currentUser.code,
+                    userName: currentUser.name
+                };
+
+                await db.ref('requests').push(song);
+
+                showToast();
+                // Clear search results
+                document.getElementById('searchResults').innerHTML = '';
+                document.getElementById('searchInput').value = '';
+
+            } catch (error) {
+                console.error("Error:", error);
+                alert("Error: " + error.message);
+            }
         }
 
         function deleteSong(key) {

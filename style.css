@@ -112,6 +112,30 @@ button:hover {
     opacity: 0.8;
 }
 
+/* Search Results */
+.search-results {
+    width: 100%;
+    max-width: 500px;
+    margin: -2rem auto 3rem auto;
+    /* Pull up slightly */
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.search-item {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    padding: 10px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.search-item:hover {
+    background: var(--hover-bg);
+}
+
+
 /* Queue List - Centered and Clean */
 .queue-list {
     width: 100%;
