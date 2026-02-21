@@ -3,14 +3,13 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Request</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
-    <script
-        src="https://cdnjs.cloudflare.com/ajax/libs/moment-duration-format/2.3.2/moment-duration-format.min.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 
 <body>
@@ -18,117 +17,128 @@
     <div id="userGreeting" class="user-greeting"></div>
 
     <div class="container">
-        <h1>Music Request</h1>
-        <p class="subtitle">Search for a song or paste a link.</p>
+        <header>
+            <h1>MUSIC REQUEST</h1>
+            <p class="subtitle">Search for a song to enqueue</p>
+        </header>
 
-        <!-- Search Section -->
-        <div class="input-group">
-            <input type="text" id="searchInput" placeholder="SEARCH SONG" autocomplete="off"
-                onkeydown="if(event.key === 'Enter') searchVideos()">
-            <button onclick="searchVideos()" id="searchBtn">SEARCH</button>
+        <!-- Search Trigger Button -->
+        <button class="search-btn-trigger" onclick="openSearchModal()">
+            <span>Search YouTube...</span>
+            <i class="fas fa-search"></i>
+        </button>
+
+        <div class="url-input-toggle" onclick="toggleUrlBar()">Or paste direct URL</div>
+        <div id="urlBar" class="url-bar">
+            <input type="text" id="directUrl" placeholder="https://youtube.com/watch?v=..." autocomplete="off">
+            <button onclick="addFromUrl()">ENQUEUE URL</button>
         </div>
 
-        <div id="searchResults" class="search-results"></div>
-
-        <!-- Hidden URL Input -->
-        <div style="margin-bottom: 30px;">
-            <p onclick="toggleUrlInput()"
-                style="cursor:pointer; text-decoration:underline; font-size:0.8rem; color:#666; margin-bottom:10px;">
-                Have a direct link?</p>
-            <div id="urlInputContainer" style="display:none;" class="input-group">
-                <input type="text" id="songInput" placeholder="YOUTUBE URL" autocomplete="off">
-                <button onclick="addSongFromUrl()">ENQUEUE URL</button>
-            </div>
+        <!-- Queue Section -->
+        <div class="queue-header">
+            <h2>UP NEXT</h2>
+            <span id="queueCount" style="color:var(--text-muted); font-size:0.8rem; font-weight:600;">0 SONGS</span>
+        </div>
+        <div id="queueList" class="queue-list">
+            <div style="text-align:center; padding: 20px; color: var(--text-muted);">LOADING QUEUE...</div>
         </div>
 
-        <div style="font-size:0.8rem; color:#444; margin-top: -30px; margin-bottom: 20px;">
-            Connected to Global DB (Realtime)
+        <!-- Total Time Counter (Displayed only if user has songs) -->
+        <div class="counter-box" id="userTimerBox" style="display: none; margin-top: 20px;">
+            <div class="counter-label">Time Remaining for all songs</div>
+            <div id="totalTimeCounter" class="counter-value">00:00</div>
         </div>
+    </div>
 
-        <div class="queue-container">
-            <h2 style="font-size: 1.5rem; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 20px;">
-                CURRENT QUEUE</h2>
-            <div id="queueList" class="queue-list">
-                <div style="opacity:0.5; padding:20px;">LOADING QUEUE...</div>
+    <!-- Search Modal -->
+    <div id="searchModal" class="modal-overlay">
+        <div class="modal-header">
+            <input type="text" id="searchInput" class="modal-search-input" placeholder="Type a song name..."
+                autocomplete="off">
+            <button class="modal-close" onclick="closeSearchModal()">Close</button>
+        </div>
+        <div id="searchResults" class="modal-results">
+            <div style="text-align:center; padding: 20px; color: var(--text-muted); margin-top:20px;">
+                <i class="fas fa-search" style="font-size:2rem; opacity:0.3; margin-bottom:10px; display:block;"></i>
+                Search results will appear here
             </div>
         </div>
     </div>
 
     <!-- Login Overlay -->
-    <div id="loginOverlay"
-        style="position:fixed; inset:0; background:#000; z-index:9999; display:flex; justify-content:center; align-items:center; flex-direction:column; padding:20px;">
-        <h1 style="font-size:2rem; margin-bottom:2rem;">ACCESS CODE</h1>
-        <div style="display:flex; flex-direction:column; gap:10px; width:100%; max-width:300px;">
-            <input type="text" id="codeInput" placeholder="4-DIGIT CODE" maxlength="4"
-                style="text-align:center; font-size:1.5rem; letter-spacing:5px;">
+    <div id="loginOverlay">
+        <h1>ACCESS CODE</h1>
+        <div style="width:100%; max-width:300px;">
+            <input type="text" id="codeInput" placeholder="4-DIGIT CODE" maxlength="4">
             <button onclick="verifyCode()">ENTER</button>
+            <p id="loginError"
+                style="color:var(--accent); margin-top:15px; text-align:center; display:none; font-weight:600;">INVALID
+                CODE</p>
         </div>
-        <p id="loginError" style="color:red; margin-top:10px; display:none;">INVALID CODE</p>
     </div>
 
     <!-- Now Playing Footer -->
     <div id="nowPlayingBar" class="now-playing-bar">
-        <div class="np-info">
+        <div class="np-content">
             <img id="npThumb" src="" class="np-thumb" alt="thumb">
-            <div class="np-text">
-                <span id="npTitle" class="np-title">LOADING...</span>
-                <span id="npChannel" class="np-artist">Wait...</span>
-            </div>
-        </div>
-        <div class="np-progress-container">
-            <div class="np-time">
-                <span id="npCurrentTime">0:00</span>
-                <span id="npDuration">2:00</span>
-            </div>
-            <div class="progress-bg">
-                <div id="npFill" class="progress-fill"></div>
+            <div class="np-info">
+                <div id="npTitle" class="np-title">LOADING...</div>
+                <div id="npChannel" class="np-artist">Wait...</div>
+
+                <div class="np-progress-row">
+                    <span id="npCurrentTime" class="np-time">0:00</span>
+                    <div class="np-progress-bar">
+                        <div id="npFill" class="np-progress-fill"></div>
+                    </div>
+                    <span id="npDuration" class="np-time">2:00</span>
+                </div>
             </div>
         </div>
     </div>
 
-    <div id="toast" class="toast">Request added</div>
+    <div id="toast" class="toast">Added to Queue!</div>
 
     <script>
         const firebaseConfig = {
-            apiKey: "AIzaSyBi5fQUumRe3zDb82mOcbl_m3JxP_9vVO4",
-            authDomain: "toon-acb19.firebaseapp.com",
             databaseURL: "https://toon-acb19-default-rtdb.europe-west1.firebasedatabase.app",
-            projectId: "toon-acb19",
-            storageBucket: "toon-acb19.firebasestorage.app",
-            messagingSenderId: "627627273918",
-            appId: "1:627627273918:web:55132292fc07d4a06e38ef",
-            measurementId: "G-6MMXY2SG4D"
+            projectId: "toon-acb19"
         };
 
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
-        const API_KEY = "AIzaSyDolnN5Or3RxPSEObNNfK0gZgQD0z4IITQ";
 
-        // Global State
         let currentNowPlaying = null;
         let currentUser = null;
         let localQueue = [];
+        let searchTimeout = null;
 
         document.addEventListener('DOMContentLoaded', () => {
             checkLogin();
             initListeners();
-            // Local UI Loop for Progress Bar only
-            setInterval(updateNowPlayingUI, 200);
+            setInterval(updateNowPlayingUI, 500);
+            setInterval(updateTotalTimeCounter, 4000);
+
+            // Live Search
+            document.getElementById('searchInput').addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                const query = e.target.value.trim();
+                if (query.length > 2) {
+                    searchTimeout = setTimeout(() => doCustomSearch(query), 600);
+                } else {
+                    document.getElementById('searchResults').innerHTML = '';
+                }
+            });
         });
 
         function initListeners() {
-            // Queue Listener
             db.ref('requests').on('value', (snapshot) => {
                 const data = snapshot.val();
-                if (!data) {
-                    localQueue = [];
-                } else {
-                    localQueue = Object.entries(data).map(([key, val]) => ({ key, ...val }));
-                }
+                if (!data) localQueue = [];
+                else localQueue = Object.entries(data).map(([key, val]) => ({ key, ...val }));
                 renderQueue(localQueue);
+                updateTotalTimeCounter();
             });
 
-            // Now Playing Listener
             db.ref('now_playing').on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data) {
@@ -138,10 +148,11 @@
                     currentNowPlaying = null;
                     document.getElementById('nowPlayingBar').classList.remove('active');
                 }
+                updateTotalTimeCounter();
             });
         }
 
-        // --- AUTH ---
+        /* AUTH */
         function checkLogin() {
             const stored = localStorage.getItem('musicUser');
             if (stored) {
@@ -150,236 +161,259 @@
                 updateGreeting();
             }
         }
-
         function verifyCode() {
             const input = document.getElementById('codeInput');
             const code = input.value.trim();
             const errorMsg = document.getElementById('loginError');
-
             if (code.length !== 4) return;
-
             errorMsg.style.display = 'none';
 
-            db.ref('codes/' + code).once('value')
-                .then(snapshot => {
-                    const data = snapshot.val();
-                    if (!data) {
-                        errorMsg.innerText = "CODE NOT FOUND";
-                        errorMsg.style.display = 'block';
-                        return;
-                    }
-                    if (data.claimed) {
-                        errorMsg.innerText = "CODE ALREADY USED";
-                        errorMsg.style.display = 'block';
-                        return;
-                    }
+            db.ref('codes/' + code).once('value').then(snapshot => {
+                const data = snapshot.val();
+                if (!data) { errorMsg.innerText = "CODE NOT FOUND"; errorMsg.style.display = 'block'; return; }
+                if (data.claimed) { errorMsg.innerText = "CODE ALREADY USED"; errorMsg.style.display = 'block'; return; }
 
-                    // Claim
-                    return db.ref('codes/' + code).update({ claimed: true }).then(() => {
-                        currentUser = { code: code, name: data.name };
-                        localStorage.setItem('musicUser', JSON.stringify(currentUser));
-                        document.getElementById('loginOverlay').style.display = 'none';
-                        updateGreeting();
-                    });
-                })
-                .catch(e => {
-                    console.error(e);
-                    errorMsg.innerText = "ERROR CONNECTING";
-                    errorMsg.style.display = 'block';
+                db.ref('codes/' + code).update({ claimed: true }).then(() => {
+                    currentUser = { code: code, name: data.name };
+                    localStorage.setItem('musicUser', JSON.stringify(currentUser));
+                    document.getElementById('loginOverlay').style.display = 'none';
+                    updateGreeting();
                 });
+            }).catch(e => {
+                errorMsg.innerText = "ERROR CONNECTING";
+                errorMsg.style.display = 'block';
+            });
         }
-
         function updateGreeting() {
             if (currentUser) {
                 document.getElementById('userGreeting').innerText = `HOLA, ${currentUser.name}`;
             }
         }
 
-        // --- MAIN ---
-        // --- MAIN ---
-        function toggleUrlInput() {
-            const el = document.getElementById('urlInputContainer');
-            el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+        /* UTILS */
+        function parseDurationText(str) {
+            if (!str) return 0;
+            const parts = str.split(':').reverse();
+            let secs = 0;
+            if (parts[0]) secs += parseInt(parts[0]);
+            if (parts[1]) secs += parseInt(parts[1]) * 60;
+            if (parts[2]) secs += parseInt(parts[2]) * 3600;
+            return secs;
+        }
+        function formatSecs(s) {
+            s = Math.floor(s);
+            const m = Math.floor(s / 60);
+            const secs = (s % 60).toString().padStart(2, '0');
+            return `${m}:${secs}`;
+        }
+        async function fetchHtml(url) {
+            try {
+                let res = await fetch("https://api.codetabs.com/v1/proxy?quest=" + url);
+                if (res.ok) return await res.text();
+            } catch (e) { }
+            try {
+                let res2 = await fetch("https://corsproxy.io/?url=" + encodeURIComponent(url));
+                if (res2.ok) return await res2.text();
+            } catch (e) { }
+            throw new Error("Proxies failed");
         }
 
-        async function searchVideos() {
-            if (!currentUser) return;
+        /* SEARCH MODAL */
+        function openSearchModal() {
+            document.getElementById('searchModal').classList.add('open');
+            setTimeout(() => document.getElementById('searchInput').focus(), 100);
+        }
+        function closeSearchModal() {
+            document.getElementById('searchModal').classList.remove('open');
+            document.getElementById('searchInput').value = '';
+            document.getElementById('searchResults').innerHTML = '';
+        }
 
-            const input = document.getElementById('searchInput');
-            const query = input.value.trim();
-            const button = document.getElementById('searchBtn');
-
-            if (!query) return;
-
-            button.innerText = "SEARCHING...";
-            button.disabled = true;
+        /* CUSTOM YT DATA FETCHER (API V3 ALTERNATIVE) */
+        async function doCustomSearch(query) {
+            const resultsContainer = document.getElementById('searchResults');
+            resultsContainer.innerHTML = '<div class="loader-spinner"></div>';
 
             try {
-                const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=5&key=${API_KEY}`;
-                const res = await fetch(searchUrl);
-                const data = await res.json();
+                const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(encodeURIComponent(query))}`;
+                const text = await fetchHtml(url);
 
-                if (!data.items) throw new Error("Search failed");
+                const match = text.match(/var ytInitialData = ({.*?});<\/script>/);
+                if (!match) throw new Error("Parse error");
+                const data = JSON.parse(match[1]);
 
-                renderSearchResults(data.items);
+                const contents = data.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents;
+
+                let html = '';
+                let count = 0;
+                for (let item of contents) {
+                    if (item.videoRenderer && item.videoRenderer.lengthText) {
+                        const vid = item.videoRenderer;
+                        const vId = vid.videoId;
+                        const title = vid.title.runs[0].text;
+                        const channel = vid.ownerText ? vid.ownerText.runs[0].text : '';
+                        const thumb = vid.thumbnail.thumbnails[0].url;
+                        const durText = vid.lengthText.simpleText;
+                        const durSec = parseDurationText(durText);
+
+                        // We safely serialize to a string
+                        const objStr = encodeURIComponent(JSON.stringify({
+                            id: vId, title: title, channel: channel, thumb: thumb, durationText: durText, durationSeconds: durSec
+                        }));
+
+                        html += `
+                            <div class="result-item" onclick="addCustomVideo('${objStr}')">
+                                <img src="${thumb}">
+                                <div class="result-info">
+                                    <div class="result-title">${title}</div>
+                                    <div class="result-meta">
+                                        <span>${channel}</span>
+                                        <span class="result-duration">${durText}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        count++;
+                        if (count >= 10) break;
+                    }
+                }
+
+                resultsContainer.innerHTML = html || '<div style="text-align:center; padding: 20px; color: #888;">NO RESULTS FOUND</div>';
             } catch (error) {
                 console.error(error);
-                alert("Search Error: " + error.message);
-            }
-
-            button.innerText = "SEARCH";
-            button.disabled = false;
-        }
-
-        function renderSearchResults(items) {
-            const container = document.getElementById('searchResults');
-            container.innerHTML = '';
-
-            if (items.length === 0) {
-                container.innerHTML = '<div style="opacity:0.5; padding:10px;">NO RESULTS</div>';
-                return;
-            }
-
-            items.forEach(item => {
-                const vidId = item.id.videoId;
-                const snippet = item.snippet;
-
-                const div = document.createElement('div');
-                div.className = 'search-item';
-                div.innerHTML = `
-                    <div style="display:flex; gap:10px; align-items:center;">
-                        <img src="${snippet.thumbnails.default.url}" style="width:120px; height:90px; object-fit:cover; border-radius:4px;">
-                        <div style="text-align:left;">
-                            <div style="font-weight:bold; font-size:0.9rem; margin-bottom:4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${snippet.title}</div>
-                            <div style="font-size:0.8rem; color:#888;">${snippet.channelTitle}</div>
-                        </div>
-                    </div>
-                `;
-                div.onclick = () => processVideoId(vidId);
-                container.appendChild(div);
-            });
-        }
-
-        async function addSongFromUrl() {
-            const input = document.getElementById('songInput');
-            const url = input.value.trim();
-
-            if (!url) return;
-
-            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
-            const match = url.match(regExp);
-
-            if (match && match[2].length === 11) {
-                await processVideoId(match[2]);
-                input.value = '';
-            } else {
-                alert('INVALID URL');
+                resultsContainer.innerHTML = '<div style="text-align:center; padding: 20px; color: #ff0055;">SEARCH ERROR. PLEASE TRY AGAIN.</div>';
             }
         }
 
-        async function processVideoId(videoId) {
+        async function addCustomVideo(objEncoded) {
             if (!currentUser) return;
+            const songData = JSON.parse(decodeURIComponent(objEncoded));
 
-            // CHECK LIMIT
             let myCount = localQueue.filter(s => s.userCode === currentUser.code).length;
             if (myCount >= 2) {
-                alert(`QUEUE LIMIT REACHED (${myCount}/2). WAIT FOR YOUR SONGS TO PLAY.`);
+                alert(`QUEUE LIMIT REACHED (${myCount}/2). Wait for your songs to play.`);
                 return;
             }
 
-            // Simple UI feedback using the search button just to show activity if search was used
-            // Or use a global loader. For simplicity, let's just show toast early or use a temp loader.
-            // But better:
+            const song = {
+                id: songData.id,
+                title: songData.title,
+                channel: songData.channel,
+                thumb: songData.thumb,
+                duration: songData.durationText,
+                durationSeconds: songData.durationSeconds,
+                addedAt: firebase.database.ServerValue.TIMESTAMP,
+                userCode: currentUser.code,
+                userName: currentUser.name
+            };
 
-            try {
-                const ytUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${API_KEY}`;
-                const res = await fetch(ytUrl);
-                const data = await res.json();
+            await db.ref('requests').push(song);
+            closeSearchModal();
+            showToast("Added to Queue!");
+        }
 
-                if (!data.items || data.items.length === 0) throw new Error("Video not found");
+        /* URL INPUT */
+        function toggleUrlBar() {
+            const el = document.getElementById('urlBar');
+            el.style.display = el.style.display === 'flex' ? 'none' : 'flex';
+        }
+        async function addFromUrl() {
+            const input = document.getElementById('directUrl');
+            const urlStr = input.value.trim();
+            if (!urlStr) return;
 
-                const item = data.items[0];
-                const snippet = item.snippet;
-                const details = item.contentDetails;
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
+            const match = urlStr.match(regExp);
 
-                const durationObj = moment.duration(details.duration);
-                const durationFormatted = durationObj.format("mm:ss", { trim: false });
-                const durationSeconds = durationObj.asSeconds();
+            if (match && match[2].length === 11) {
+                const loaderId = showLoaderInQueue();
+                try {
+                    const videoId = match[2];
+                    const url = `https://www.youtube.com/watch?v=${videoId}`;
+                    const text = await fetchHtml(url);
 
-                const song = {
-                    id: videoId,
-                    title: snippet.title,
-                    channel: snippet.channelTitle,
-                    thumb: snippet.thumbnails.high ? snippet.thumbnails.high.url : snippet.thumbnails.default.url,
-                    duration: durationFormatted,
-                    durationSeconds: durationSeconds,
-                    publishedAt: snippet.publishedAt,
-                    addedAt: firebase.database.ServerValue.TIMESTAMP,
-                    userCode: currentUser.code,
-                    userName: currentUser.name
-                };
+                    const pMatch = text.match(/var ytInitialPlayerResponse = ({.*?});<\/script>/) || text.match(/ytInitialPlayerResponse\s*=\s*({.*?});/);
+                    if (!pMatch) throw new Error("Could not parse YouTube video details.");
+                    const data = JSON.parse(pMatch[1]);
+                    const details = data.videoDetails;
 
-                await db.ref('requests').push(song);
+                    const durSec = parseInt(details.lengthSeconds);
+                    const durText = formatSecs(durSec);
 
-                showToast();
-                // Clear search results
-                document.getElementById('searchResults').innerHTML = '';
-                document.getElementById('searchInput').value = '';
+                    const songData = {
+                        id: videoId, title: details.title, channel: details.author,
+                        thumb: details.thumbnail.thumbnails[0].url,
+                        durationText: durText, durationSeconds: durSec
+                    };
 
-            } catch (error) {
-                console.error("Error:", error);
-                alert("Error: " + error.message);
+                    const objStr = encodeURIComponent(JSON.stringify(songData));
+                    addCustomVideo(objStr);
+                    input.value = '';
+                } catch (e) {
+                    alert("Error: " + e.message);
+                } finally {
+                    removeLoaderInQueue(loaderId);
+                }
+            } else {
+                alert('INVALID YOUTUBE URL');
             }
         }
 
+        function showLoaderInQueue() {
+            const id = 'l_' + Date.now();
+            const list = document.getElementById('queueList');
+            list.insertAdjacentHTML('afterbegin', `<div id="${id}" style="text-align:center; padding:10px;"><div class="loader-spinner"></div></div>`);
+            return id;
+        }
+        function removeLoaderInQueue(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        }
+
+        /* QUEUE MANAGEMENT */
         function deleteSong(key) {
-            if (!confirm("DELETE REQUEST?")) return;
+            if (!confirm("Remove request?")) return;
             db.ref('requests/' + key).remove()
                 .catch(e => alert("ERROR DELETING"));
         }
 
         function renderQueue(queue) {
+            document.getElementById('queueCount').innerText = `${queue.length} SONG${queue.length !== 1 ? 'S' : ''}`;
             const list = document.getElementById('queueList');
             if (queue.length === 0) {
-                list.innerHTML = '<div style="opacity:0.5; padding:20px;">QUEUE EMPTY</div>';
+                list.innerHTML = '<div style="opacity:0.5; padding:20px; text-align:center;">QUEUE EMPTY</div>';
                 return;
             }
 
             list.innerHTML = queue.map(song => {
                 const isMine = currentUser && song.userCode === currentUser.code;
-                const deleteBtn = isMine ?
-                    `<button onclick="deleteSong('${song.key}')" style="padding:5px 10px; font-size:0.7rem; background:red; border:none; color:white; margin-left:10px; cursor:pointer;">DEL</button>`
-                    : '';
+                const deleteBtn = isMine ? `<button class="delete-btn" onclick="deleteSong('${song.key}')">REMOVE</button>` : '';
 
                 return `
                 <div class="queue-item">
                     <img src="${song.thumb}" alt="thumb">
-                    <div class="info">
-                        <span class="title">${song.title}</span>
-                        <div style="display:flex; justify-content:space-between; width:100%; margin-top:5px;">
-                            <span class="status">${song.userName || 'UNKNOWN'}</span>
-                            <div style="display:flex; align-items:center;">
-                                <span class="status" style="border:1px solid #333; padding:2px 6px;">${song.duration || '2:00'}</span>
-                                ${deleteBtn}
-                            </div>
+                    <div class="queue-item-info">
+                        <div class="queue-item-title">${song.title}</div>
+                        <div class="queue-item-meta">
+                            <span class="queue-item-user">${song.userName || 'UNKNOWN'}</span>
+                            <span class="queue-item-duration">${song.duration || '2:00'}</span>
+                            ${deleteBtn}
                         </div>
                     </div>
                 </div>
             `}).join('');
         }
 
-        // --- Now Playing UI ---
+        /* TIMERS & UI */
         function updateNowPlayingData(data) {
             const bar = document.getElementById('nowPlayingBar');
             bar.classList.add('active');
             if (document.getElementById('npTitle').innerText !== data.title) {
                 document.getElementById('npTitle').innerText = data.title;
-                document.getElementById('npChannel').innerText = data.channel || 'Unknown Artist';
+                document.getElementById('npChannel').innerText = data.channel || 'Unknown';
                 document.getElementById('npThumb').src = data.thumb;
-                const maxDuration = Math.min(120, data.durationSeconds || 120);
-                const mTotal = Math.floor(maxDuration / 60);
-                const sTotal = Math.floor(maxDuration % 60).toString().padStart(2, '0');
-                document.getElementById('npDuration').innerText = `${mTotal}:${sTotal}`;
+                const maxDur = Math.min(120, data.durationSeconds || 120);
+                document.getElementById('npDuration').innerText = formatSecs(maxDur);
             }
         }
 
@@ -393,15 +427,35 @@
             }
             const pct = (elapsed / maxDuration) * 100;
             document.getElementById('npFill').style.width = `${pct}%`;
-            const m = Math.floor(elapsed / 60);
-            const s = Math.floor(elapsed % 60).toString().padStart(2, '0');
-            document.getElementById('npCurrentTime').innerText = `${m}:${s}`;
+            document.getElementById('npCurrentTime').innerText = formatSecs(elapsed);
         }
 
-        function showToast() {
+        function updateTotalTimeCounter() {
+            let totalSecs = 0;
+            if (currentNowPlaying) {
+                let maxPlayingDur = Math.min(120, currentNowPlaying.durationSeconds || 120);
+                let elapsed = (Date.now() - currentNowPlaying.startTime) / 1000;
+                let left = maxPlayingDur - elapsed;
+                if (left > 0) totalSecs += left;
+            }
+            for (let song of localQueue) {
+                let maxDur = Math.min(120, song.durationSeconds || 120);
+                totalSecs += maxDur;
+            }
+            document.getElementById('totalTimeCounter').innerText = formatSecs(Math.max(0, totalSecs));
+
+            if (currentUser) {
+                let hasSongs = localQueue.some(s => s.userCode === currentUser.code);
+                let box = document.getElementById('userTimerBox');
+                if (box) box.style.display = hasSongs ? 'block' : 'none';
+            }
+        }
+
+        function showToast(msg) {
             const toast = document.getElementById('toast');
+            toast.innerText = msg;
             toast.classList.add('show');
-            setTimeout(() => { toast.classList.remove('show'); }, 2000);
+            setTimeout(() => { toast.classList.remove('show'); }, 2500);
         }
     </script>
 </body>

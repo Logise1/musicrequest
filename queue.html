@@ -65,14 +65,8 @@
 
     <script>
         const firebaseConfig = {
-            apiKey: "AIzaSyBi5fQUumRe3zDb82mOcbl_m3JxP_9vVO4",
-            authDomain: "toon-acb19.firebaseapp.com",
             databaseURL: "https://toon-acb19-default-rtdb.europe-west1.firebasedatabase.app",
-            projectId: "toon-acb19",
-            storageBucket: "toon-acb19.firebasestorage.app",
-            messagingSenderId: "627627273918",
-            appId: "1:627627273918:web:55132292fc07d4a06e38ef",
-            measurementId: "G-6MMXY2SG4D"
+            projectId: "toon-acb19"
         };
 
         firebase.initializeApp(firebaseConfig);
@@ -90,6 +84,7 @@
         let currentSong = null;
         let isSessionActive = false;
         let loadingTimeout = null;
+        let isWaitingForNext = false;
 
         function initListeners() {
             // Queue Listener
@@ -102,6 +97,9 @@
 
                 // Auto Trigger if idle and safe
                 if (!isSessionActive && !isChanging && localQueue.length > 0) {
+                    if (player && typeof player.loadVideoById === 'function') playNext();
+                } else if (isWaitingForNext && !isChanging && localQueue.length > 0) {
+                    isWaitingForNext = false;
                     if (player && typeof player.loadVideoById === 'function') playNext();
                 }
             });
@@ -254,7 +252,12 @@
                 timerDuration--;
                 if (timerDuration <= 0) {
                     clearInterval(countdownInterval);
-                    playNext();
+                    if (localQueue.length > 0) {
+                        playNext();
+                    } else {
+                        isWaitingForNext = true;
+                        document.getElementById('countdown').innerText = "00:00";
+                    }
                 }
             }, 1000);
         }
@@ -407,7 +410,12 @@
                 timerDuration--;
                 if (timerDuration <= 0) {
                     clearInterval(countdownInterval);
-                    playNext();
+                    if (localQueue.length > 0) {
+                        playNext();
+                    } else {
+                        isWaitingForNext = true;
+                        document.getElementById('countdown').innerText = "00:00";
+                    }
                 }
             }, 1000);
         }
