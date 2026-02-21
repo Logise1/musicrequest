@@ -19,8 +19,10 @@
     </div>
 
     <div class="player-wrapper" style="border:none; margin-bottom: 1rem;">
-        <div class="video-container" style="border: 2px solid #333;">
+        <div class="video-container" style="border: 2px solid #333; position: relative;">
             <div id="player"></div>
+            <div id="playerOverlay"
+                style="position: absolute; inset: 0; z-index: 10; pointer-events: auto; background: transparent;"></div>
         </div>
 
         <div class="now-playing-info">
@@ -52,6 +54,9 @@
                 <button onclick="clearQueue()"
                     style="padding:8px 15px; cursor:pointer; background:#aa0000; border:none; color:white; font-weight:bold; border-radius:4px;">CLEAR
                     QUEUE</button>
+                <button onclick="toggleProjection()"
+                    style="padding:8px 15px; cursor:pointer; background:#00ffcc; border:none; color:black; font-weight:bold; border-radius:4px;">PROJECTION
+                    MODE</button>
             </div>
         </div>
 
@@ -62,6 +67,25 @@
             <!-- Items -->
         </div>
     </div>
+
+    <!-- Projection Mode UI -->
+    <div class="projection-ui">
+        <div class="projection-header">
+            <div class="now-playing-small">NOW PLAYING: <span id="projCurrentTitle">WAITING...</span></div>
+            <div class="next-up-small">NEXT UP: <span id="projNextTitle">-</span></div>
+        </div>
+
+        <div id="projectionAnnouncement" class="projection-announcement">
+            <div class="announcement-label">NEXT UP</div>
+            <div id="projAnnounceTitle" class="announcement-title">SONG TITLE</div>
+        </div>
+
+        <div class="projection-progress-container">
+            <div id="projProgressBar" class="projection-progress-bar"></div>
+        </div>
+    </div>
+
+    <button class="exit-projection-btn" onclick="toggleProjection()">EXIT PROJECTION</button>
 
     <script>
         const firebaseConfig = {
@@ -85,6 +109,30 @@
         let isSessionActive = false;
         let loadingTimeout = null;
         let isWaitingForNext = false;
+        let isProjectionMode = false;
+
+        function toggleProjection() {
+            isProjectionMode = !isProjectionMode;
+            document.body.classList.toggle('projection-active', isProjectionMode);
+
+            // Try to go fullscreen
+            if (isProjectionMode) {
+                if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen().catch(e => console.log("Fullscreen failed", e));
+                }
+            } else {
+                if (document.exitFullscreen && document.fullscreenElement) {
+                    document.exitFullscreen().catch(e => console.log("Exit fullscreen failed", e));
+                }
+            }
+        }
+
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement && isProjectionMode) {
+                isProjectionMode = false;
+                document.body.classList.remove('projection-active');
+            }
+        });
 
         function initListeners() {
             // Queue Listener
@@ -94,6 +142,13 @@
                 else localQueue = Object.entries(data).map(([key, val]) => ({ key, ...val }));
 
                 renderQueue(localQueue);
+
+                // Update Projection Next Up
+                if (localQueue.length > 0) {
+                    document.getElementById('projNextTitle').innerText = localQueue[0].title.toUpperCase();
+                } else {
+                    document.getElementById('projNextTitle').innerText = "-";
+                }
 
                 // Auto Trigger if idle and safe
                 if (!isSessionActive && !isChanging && localQueue.length > 0) {
@@ -134,7 +189,12 @@
                     'controls': 0,
                     'disablekb': 1,
                     'iv_load_policy': 3,
-                    'playsinline': 1
+                    'playsinline': 1,
+                    'modestbranding': 1,
+                    'rel': 0,
+                    'showinfo': 0,
+                    'fs': 0,
+                    'autohide': 1
                 },
                 events: {
                     'onReady': onPlayerReady,
@@ -157,15 +217,17 @@
                 // Check if it's the requested song
                 if (currentSong && playingId === currentSong.id) {
                     // Real Content
+                    if (player.isMuted()) player.unMute();
+                    player.setVolume(100);
+
                     if (!isSessionActive) {
                         console.log("DEBUG: Real content started. Starting Session...");
                         startSession();
                     }
                 } else {
                     // Ad or Mismatch
-                    console.log("DEBUG: ID Mismatch or Ad detected. Waiting...");
-                    // Optional: Mute ads? 
-                    // if(!player.isMuted()) player.mute(); 
+                    console.log("DEBUG: ID Mismatch or Ad detected. Muting...");
+                    if (!player.isMuted()) player.mute();
                 }
             }
 
@@ -174,6 +236,14 @@
                 if (isSessionActive) {
                     console.log("Video ended natural, playing next...");
                     playNext();
+                }
+            }
+
+            // 3. PAUSED (Force Play)
+            if (event.data === YT.PlayerState.PAUSED) {
+                if (isSessionActive && !isChanging) {
+                    console.log("DEBUG: Pause detected, forcing play...");
+                    player.playVideo();
                 }
             }
         }
@@ -285,6 +355,14 @@
                     const text = `Ahora suena: ${safeTitle}${userText}`;
                     console.log("DEBUG: Speaking TTS:", text);
 
+                    // Show Projection Announcement
+                    const announceEl = document.getElementById('projectionAnnouncement');
+                    const announceTitleEl = document.getElementById('projAnnounceTitle');
+                    if (announceEl && announceTitleEl) {
+                        announceTitleEl.innerText = title.toUpperCase();
+                        announceEl.classList.add('active');
+                    }
+
                     const utterance = new SpeechSynthesisUtterance(text);
                     utterance.lang = 'es-ES';
                     utterance.rate = 1.1;
@@ -292,12 +370,14 @@
 
                     utterance.onend = () => {
                         console.log("DEBUG: TTS Ended");
+                        if (announceEl) announceEl.classList.remove('active');
                         clearTimeout(safety);
                         resolve();
                     };
 
                     utterance.onerror = (e) => {
                         console.log("DEBUG: TTS Error", e);
+                        if (announceEl) announceEl.classList.remove('active');
                         clearTimeout(safety);
                         resolve();
                     };
@@ -341,11 +421,13 @@
             // Optimistic UI
             renderQueue(localQueue.slice(1));
             document.getElementById('currentTitle').innerText = "ANNOUNCING...";
+            document.getElementById('projCurrentTitle').innerText = "ANNOUNCING...";
 
             // 3. Wait for TTS (Music is now silent)
             await playAnnouncement(next.title, next.userName);
 
             document.getElementById('currentTitle').innerText = "LOADING VIDEO...";
+            document.getElementById('projCurrentTitle').innerText = "LOADING VIDEO...";
 
             // Remove from Queue (It's now 'pending' in player)
             db.ref('requests/' + next.key).remove().catch(e => console.error(e));
@@ -387,7 +469,9 @@
             db.ref('now_playing').set(nowPlayingData);
 
             // UI
-            document.getElementById('currentTitle').innerText = currentSong.title.toUpperCase();
+            const titleUpper = currentSong.title.toUpperCase();
+            document.getElementById('currentTitle').innerText = titleUpper;
+            document.getElementById('projCurrentTitle').innerText = titleUpper;
 
             // Timer Logic
             const LIMIT = MAX_DURATION;
@@ -424,7 +508,9 @@
             isSessionActive = false;
             currentSong = null;
             document.getElementById('currentTitle').innerText = "WAITING FOR REQUESTS...";
+            document.getElementById('projCurrentTitle').innerText = "WAITING...";
             document.getElementById('countdown').innerText = "00:00";
+            document.getElementById('projProgressBar').style.width = "0%";
             db.ref('now_playing').remove();
             if (player && player.stopVideo) player.stopVideo();
             isChanging = false;
@@ -434,6 +520,16 @@
             const min = Math.floor(s / 60).toString().padStart(2, '0');
             const sec = (Math.floor(s) % 60).toString().padStart(2, '0'); // floor s just in case
             document.getElementById('countdown').innerText = `${min}:${sec}`;
+
+            // Update Projection Progress Bar
+            const LIMIT = MAX_DURATION;
+            let realDuration = (currentSong && currentSong.durationSeconds) || LIMIT;
+            let total = realDuration > LIMIT ? LIMIT : realDuration;
+            let elapsed = total - s;
+            let percent = (elapsed / total) * 100;
+            if (percent < 0) percent = 0;
+            if (percent > 100) percent = 100;
+            document.getElementById('projProgressBar').style.width = percent + "%";
         }
 
         function renderQueue(queue) {
